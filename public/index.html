@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Password Manager</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  section { border: 1px solid #ccd; border-radius: 8px; padding: 14px 16px; margin: 16px 0; background: #fafbff; }
+  label { display: block; font-size: .85rem; margin: 8px 0 3px; color: #445; }
+  input[type=text], input[type=password], input[type=number], textarea { width: 100%; box-sizing: border-box; padding: 7px; font: inherit; border: 1px solid #aab; border-radius: 5px; }
+  button { margin: 8px 6px 0 0; padding: 6px 12px; border: 0; border-radius: 5px; background: #2b4acb; color: #fff; font: inherit; cursor: pointer; }
+  button.alt { background: #556; } button.danger { background: #b00020; }
+  .row { display: flex; gap: 10px; align-items: end; } .row > * { flex: 1; }
+  .entry { border: 1px solid #ccd; border-radius: 6px; padding: 10px; margin: 8px 0; background: #fff; }
+  .pw { font-family: ui-monospace, monospace; background: #fff6c8; padding: 2px 6px; border-radius: 4px; }
+  .muted { color: #667; font-size: .85rem; } .err { color: #b00020; font-weight: 600; } .ok { color: #0a6b2d; font-weight: 600; }
+  .top { display: flex; justify-content: space-between; align-items: center; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="top"><h1>Password Manager</h1><div id="userbar" class="hidden"><span id="who"></span> <button class="alt" id="btnLogout">Log out</button> <button class="danger" id="btnQuit">Quit app</button></div></div>
+<p id="msg"></p>
+
+<section id="auth">
+  <h2>Log in or register</h2>
+  <div class="row">
+    <div><label for="user">Username</label><input id="user" type="text" autocomplete="username"></div>
+    <div><label for="pass">Master password (min. 8 characters)</label><input id="pass" type="password" autocomplete="current-password"></div>
+  </div>
+  <button id="btnLogin">Log in</button><button id="btnReg" class="alt">Register</button>
+</section>
+
+<div id="app" class="hidden">
+  <section>
+    <h2>Search by title</h2>
+    <input id="q" type="text" placeholder="Type a title (leave empty to list all)">
+    <div id="results"></div>
+  </section>
+
+  <section>
+    <h2 id="formTitle">Add a new password entry</h2>
+    <label for="t">Title</label><input id="t" type="text">
+    <label for="pw">Password</label>
+    <div class="row"><input id="pw" type="text" autocomplete="off"><button class="alt" id="btnGen" style="flex:0 0 auto">Generate</button></div>
+    <div class="row" style="margin-top:6px">
+      <label style="margin:0">Length <input id="len" type="number" value="16" min="4" max="128" style="width:70px"></label>
+      <label style="margin:0"><input id="cL" type="checkbox" checked> a-z</label>
+      <label style="margin:0"><input id="cU" type="checkbox" checked> A-Z</label>
+      <label style="margin:0"><input id="cD" type="checkbox" checked> 0-9</label>
+      <label style="margin:0"><input id="cS" type="checkbox" checked> !@#</label>
+    </div>
+    <label for="url">URL or application name</label><input id="url" type="text">
+    <label for="notes">Notes</label><textarea id="notes" rows="2"></textarea>
+    <button id="btnSave">Add entry</button><button class="alt hidden" id="btnCancel">Cancel edit</button>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let editing = null;
+
+async function api(name, body) {
+  const r = await fetch("/api/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || "Request failed");
+  return j;
+}
+function say(text, ok) { const m = $("msg"); m.className = ok ? "ok" : "err"; m.textContent = text || ""; }
+const guard = (fn) => async (...a) => { try { say(""); await fn(...a); } catch (e) { say(e.message); if (e.message === "Not logged in") showAuth(); } };
+
+function showApp(name) {
+  $("auth").classList.add("hidden"); $("app").classList.remove("hidden");
+  $("userbar").classList.remove("hidden"); $("who").textContent = "Logged in as " + name;
+  search();
+}
+function showAuth() {
+  $("auth").classList.remove("hidden"); $("app").classList.add("hidden"); $("userbar").classList.add("hidden");
+  $("pass").value = "";
+}
+
+$("btnLogin").onclick = guard(async () => { const r = await api("login", { username: $("user").value, password: $("pass").value }); $("pass").value = ""; showApp(r.username); });
+$("btnReg").onclick = guard(async () => { await api("register", { username: $("user").value, password: $("pass").value }); say("Registered. You can log in now.", true); });
+$("btnLogout").onclick = guard(async () => { await api("logout"); showAuth(); say("Logged out. Your file is encrypted.", true); });
+$("btnQuit").onclick = guard(async () => { await api("quit"); document.body.innerHTML = "<h1>Password Manager closed</h1><p>All files were encrypted with AES. You can close this tab.</p>"; });
+
+async function search() {
+  const { results } = await api("search", { q: $("q").value });
+  const box = $("results"); box.innerHTML = "";
+  if (!results.length) { box.innerHTML = '<p class="muted">No entries found.</p>'; return; }
+  for (const e of results) {
+    const d = document.createElement("div"); d.className = "entry";
+    const h = document.createElement("strong"); h.textContent = e.title;
+    const u = document.createElement("div"); u.className = "muted"; u.textContent = "URL: " + (e.url || "—");
+    const n = document.createElement("div"); n.className = "muted"; n.textContent = "Notes: " + (e.notes || "—");
+    const pw = document.createElement("div"); pw.textContent = "Password: ••••••••";
+    const mk = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = guard(fn); return b; };
+    let timer = null, shown = null;
+    const hide = () => { shown = null; pw.textContent = "Password: ••••••••"; bReveal.textContent = "Reveal"; clearTimeout(timer); };
+    const bReveal = mk("Reveal", "alt", async () => {
+      if (shown !== null) return hide();
+      const r = await api("reveal", { title: e.title }); shown = r.password;
+      pw.textContent = "Password: "; const s = document.createElement("span"); s.className = "pw"; s.textContent = shown; pw.appendChild(s);
+      bReveal.textContent = "Hide"; timer = setTimeout(hide, 10000);
+    });
+    const bCopy = mk("Copy", "alt", async () => {
+      const r = await api("reveal", { title: e.title });
+      await navigator.clipboard.writeText(r.password); say("Password copied to clipboard (cleared in 20 s).", true);
+      setTimeout(() => navigator.clipboard.writeText("").catch(() => {}), 20000);
+    });
+    const bEdit = mk("Edit", "alt", async () => startEdit(e));
+    const bDel = mk("Delete", "danger", async () => {
+      if (!confirm('Delete "' + e.title + '"?')) return;
+      await api("delete", { title: e.title }); say("Entry deleted.", true); search();
+    });
+    d.append(h, u, n, pw, bReveal, bCopy, bEdit, bDel); box.appendChild(d);
+  }
+}
+$("q").oninput = guard(search);
+
+function startEdit(e) {
+  editing = e.title;
+  $("formTitle").textContent = 'Update entry "' + e.title + '"';
+  $("t").value = e.title; $("t").disabled = true;
+  $("pw").value = ""; $("pw").placeholder = "Leave empty to keep the current password";
+  $("url").value = e.url; $("notes").value = e.notes;
+  $("btnSave").textContent = "Update entry"; $("btnCancel").classList.remove("hidden");
+  window.scrollTo(0, document.body.scrollHeight);
+}
+function resetForm() {
+  editing = null; $("formTitle").textContent = "Add a new password entry";
+  for (const id of ["t", "pw", "url", "notes"]) $(id).value = "";
+  $("t").disabled = false; $("pw").placeholder = "";
+  $("btnSave").textContent = "Add entry"; $("btnCancel").classList.add("hidden");
+}
+$("btnCancel").onclick = resetForm;
+
+$("btnSave").onclick = guard(async () => {
+  const body = { title: $("t").value, password: $("pw").value, url: $("url").value, notes: $("notes").value };
+  if (editing) { await api("update", { ...body, title: editing }); say("Entry updated.", true); }
+  else { await api("add", body); say("Entry added.", true); }
+  resetForm(); search();
+});
+
+$("btnGen").onclick = guard(async () => {
+  const r = await api("generate", { length: +$("len").value, lower: $("cL").checked, upper: $("cU").checked, digits: $("cD").checked, symbols: $("cS").checked });
+  $("pw").value = r.password;
+});
+
+api("me").then((r) => showApp(r.username)).catch(() => {});
+</script>
+</body>
+</html>

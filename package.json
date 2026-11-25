@@ -1,0 +1,7 @@
+{
+  "name": "password-manager",
+  "version": "1.0.0",
+  "description": "Password manager with AES-encrypted files, scrypt-hashed logins and per-user data files",
+  "scripts": { "start": "node server.js", "test": "node test.js" },
+  "license": "MIT"
+}
